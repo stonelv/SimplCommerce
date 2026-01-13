@@ -3,6 +3,9 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <IsPackable>false</IsPackable>
+    <UseAppHost>false</UseAppHost>
+    <RuntimeFrameworkVersion>8.0.0</RuntimeFrameworkVersion>
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <ItemGroup>

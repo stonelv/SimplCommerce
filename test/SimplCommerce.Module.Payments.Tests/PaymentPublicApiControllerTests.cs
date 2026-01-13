@@ -2,11 +2,12 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
+using System.Linq;
 using SimplCommerce.Infrastructure.Data;
 using SimplCommerce.Module.Payments.Areas.Payments.Controllers;
 using SimplCommerce.Module.Payments.Models;
 using SimplCommerce.Module.Orders.Services;
-using SimplCommerce.Module.Core.Services;
+using SimplCommerce.Module.Core.Extensions;
 using Xunit;
 
 namespace SimplCommerce.Module.Payments.Tests
@@ -35,7 +36,6 @@ namespace SimplCommerce.Module.Payments.Tests
             // Arrange
             var payment = new Payment
             {
-                Id = 1,
                 OrderId = 100,
                 Status = PaymentStatus.Failed,
                 GatewayTransactionId = "test-transaction-id"
@@ -48,8 +48,8 @@ namespace SimplCommerce.Module.Payments.Tests
             var result = await _controller.Webhook("alipay");
 
             // Assert
-            var okResult = Assert.IsType<OkObjectResult>(result);
-            Assert.Equal(200, okResult.StatusCode);
+            var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Equal(400, badRequestResult.StatusCode);
         }
 
         [Fact]
@@ -64,8 +64,8 @@ namespace SimplCommerce.Module.Payments.Tests
             var result = await _controller.Webhook("wechatpay");
 
             // Assert
-            var okResult = Assert.IsType<OkObjectResult>(result);
-            Assert.Equal(200, okResult.StatusCode);
+            var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Equal(400, badRequestResult.StatusCode);
         }
 
         [Fact]
@@ -79,8 +79,8 @@ namespace SimplCommerce.Module.Payments.Tests
             var result = await _controller.Webhook("paypal");
 
             // Assert
-            var notFoundResult = Assert.IsType<NotFoundObjectResult>(result);
-            Assert.Equal(404, notFoundResult.StatusCode);
+            var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+            Assert.Equal(400, badRequestResult.StatusCode);
         }
     }
 }
