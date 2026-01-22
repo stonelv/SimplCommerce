@@ -1,0 +1,39 @@
+# =============================================================================
+# SimplCommerce Coding Agent 开发环境 Dockerfile
+# 用于 Claude Code 等 Coding Agent 进入容器进行开发工作
+# =============================================================================
+
+ARG DOTNET_VERSION=8.0
+FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION}
+
+# 代码包下载地址
+ARG CODE_URL=https://deep-evaluation-set.tos-cn-beijing.volces.com/SimplCommerce-a9531d5bfd94afa95712bc06619f24004e44d38d.zip
+
+# 开发环境常用变量
+ENV ASPNETCORE_ENVIRONMENT=Development \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1
+
+# 安装系统依赖和开发工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    unzip \
+    vim \
+    less \
+    htop \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# 下载并解压代码
+RUN wget -O /tmp/code.zip ${CODE_URL} && \
+    unzip /tmp/code.zip -d /tmp && \
+    mv /tmp/SimplCommerce-* /workspace && \
+    rm -rf /workspace/.git && \
+    rm /tmp/code.zip
+
+# 工作目录（挂载宿主的仓库到此目录）
+WORKDIR /workspace
+
+# 安装项目依赖
+RUN dotnet restore SimplCommerce.sln
