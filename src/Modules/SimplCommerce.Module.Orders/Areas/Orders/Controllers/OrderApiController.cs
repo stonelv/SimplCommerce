@@ -6,35 +6,45 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SimplCommerce.Infrastructure;
 using SimplCommerce.Infrastructure.Data;
 using SimplCommerce.Infrastructure.Helpers;
 using SimplCommerce.Infrastructure.Web.SmartTable;
 using SimplCommerce.Module.Checkouts.Areas.Checkouts.ViewModels;
+using SimplCommerce.Module.Checkouts.Models;
+using SimplCommerce.Module.Checkouts.Services;
 using SimplCommerce.Module.Core.Extensions;
 using SimplCommerce.Module.Core.Services;
 using SimplCommerce.Module.Orders.Areas.Orders.ViewModels;
 using SimplCommerce.Module.Orders.Events;
 using SimplCommerce.Module.Orders.Models;
+using SimplCommerce.Module.Orders.Services;
+using SimplCommerce.Module.ShoppingCart.Areas.ShoppingCart.ViewModels;
+using SimplCommerce.Module.ShoppingCart.Services;
 
 namespace SimplCommerce.Module.Orders.Areas.Orders.Controllers
 {
     [Area("Orders")]
-    [Authorize(Roles = "admin, vendor")]
-    [Route("api/orders")]
+    [Authorize]
+    [Route("api/v1/orders")]
     public class OrderApiController : Controller
     {
         private readonly IRepository<Order> _orderRepository;
-        private readonly IWorkContext _workContext;
-        private readonly IMediator _mediator;
-        private readonly ICurrencyService _currencyService;
+    private readonly IWorkContext _workContext;
+    private readonly IMediator _mediator;
+    private readonly ICurrencyService _currencyService;
+    private readonly ICartService _cartService;
+    private readonly IOrderService _orderService;
 
-        public OrderApiController(IRepository<Order> orderRepository, IWorkContext workContext, IMediator mediator, ICurrencyService currencyService)
-        {
-            _orderRepository = orderRepository;
-            _workContext = workContext;
-            _mediator = mediator;
-            _currencyService = currencyService;
-        }
+    public OrderApiController(IRepository<Order> orderRepository, IWorkContext workContext, IMediator mediator, ICurrencyService currencyService, ICartService cartService, IOrderService orderService)
+    {
+        _orderRepository = orderRepository;
+        _workContext = workContext;
+        _mediator = mediator;
+        _currencyService = currencyService;
+        _cartService = cartService;
+        _orderService = orderService;
+    }
 
         [HttpGet]
         public async Task<ActionResult> Get(int status, int numRecords)
@@ -367,6 +377,70 @@ namespace SimplCommerce.Module.Orders.Areas.Orders.Controllers
             // MS Excel need the BOM to display UTF8 Correctly
             var csvBytesWithUTF8BOM = Encoding.UTF8.GetPreamble().Concat(csvBytes).ToArray();
             return File(csvBytesWithUTF8BOM, "text/csv", "orders-export.csv");
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Post([FromBody] CreateOrderModel model)
+        {
+            var currentUser = await _workContext.GetCurrentUser();
+            
+            // Check if idempotency key is provided
+            if (string.IsNullOrEmpty(model.IdempotencyKey))
+            {
+                return BadRequest(new { error = "Idempotency key is required" });
+            }
+            
+            // Check for existing order with same idempotency key (basic idempotency check)
+            var existingOrder = await _orderRepository.Query()
+                .FirstOrDefaultAsync(o => o.CustomerId == currentUser.Id && o.IdempotencyKey == model.IdempotencyKey);
+            
+            if (existingOrder != null)
+            {
+                return Ok(new { orderId = existingOrder.Id });
+            }
+            
+            // Get cart items for current user
+            var cart = await _cartService.GetCartDetails(currentUser.Id);
+            
+            if (cart == null || cart.Items == null || !cart.Items.Any())
+            {
+                return BadRequest(new { error = "Cart is empty" });
+            }
+            
+            // Create checkout from cart
+            var checkoutService = HttpContext.RequestServices.GetService(typeof(ICheckoutService)) as ICheckoutService;
+            
+            // Convert CartItemVm to CartItemToCheckoutVm
+            var cartItemsToCheckout = cart.Items.Select(item => new CartItemToCheckoutVm
+            {
+                ProductId = item.ProductId,
+                ProductPrice = item.ProductPrice,
+                Quantity = item.Quantity
+            }).ToList();
+            
+            var checkout = await checkoutService.Create(currentUser.Id, currentUser.Id, cartItemsToCheckout, cart.CouponCode);
+            
+            // Validate cart items before creating order
+            if (!cart.IsValid)
+            {
+                return BadRequest(new { error = "Cart is invalid. Please review your cart items." });
+            }
+            
+            // Create order
+            var result = await _orderService.CreateOrder(checkout.Id, model.PaymentMethod, model.PaymentFeeAmount);
+            
+            if (!result.Success)
+            {
+                return BadRequest(new { error = result.Error });
+            }
+            
+            // Set idempotency key for the created order
+            result.Value.IdempotencyKey = model.IdempotencyKey;
+            await _orderRepository.SaveChangesAsync();
+            
+            // Note: ICartService doesn't have ClearCart method. Cart clearing should be handled by the service after order creation.
+            
+            return CreatedAtAction(nameof(Get), new { id = result.Value.Id }, new { orderId = result.Value.Id });
         }
 
         [HttpPost("lines-export")]
