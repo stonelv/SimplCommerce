@@ -12,7 +12,8 @@ using SimplCommerce.Module.ShoppingCart.Services;
 namespace SimplCommerce.Module.ShoppingCart.Areas.ShoppingCart.Controllers
 {
     [Area("ShoppingCart")]
-    [Authorize(Roles = "admin")]
+    [Authorize]
+    [Route("api/v1")]
     public class CartApiController : Controller
     {
         private readonly IRepository<CartItem> _cartItemRepository;
@@ -98,5 +99,52 @@ namespace SimplCommerce.Module.ShoppingCart.Areas.ShoppingCart.Controllers
 
         //    return NoContent();
         //}
+        /// <summary>
+        /// 添加商品到购物车
+        /// </summary>
+        /// <param name="cartId">购物车ID（实际使用用户ID）</param>
+        /// <param name="model">添加到购物车的商品信息</param>
+        /// <returns>操作结果</returns>
+        [HttpPost("carts/{cartId}/items")]
+        public async Task<IActionResult> AddToCart(long cartId, [FromBody] AddToCartModel model)
+        {
+            var currentUser = await _workContext.GetCurrentUser();
+            
+            // 在这个实现中，cartId实际上是用户ID
+            if (cartId != currentUser.Id)
+            {
+                return Forbid();
+            }
+
+            // 校验商品是否可售
+            var productRepository = HttpContext.RequestServices.GetService(typeof(IRepository<SimplCommerce.Module.Catalog.Models.Product>)) as IRepository<SimplCommerce.Module.Catalog.Models.Product>;
+            var product = await productRepository.Query().FirstOrDefaultAsync(x => x.Id == model.ProductId);
+            
+            if (product == null)
+            {
+                return NotFound(new { error = "Product not found" });
+            }
+
+            if (!product.IsAllowToOrder || !product.IsPublished || product.IsDeleted)
+            {
+                return BadRequest(new { error = "Product is not available for order" });
+            }
+
+            // 校验库存
+            if (product.StockTrackingIsEnabled && model.Quantity > product.StockQuantity)
+            {
+                return BadRequest(new { error = "Not enough stock available" });
+            }
+
+            // 添加到购物车
+            var result = await _cartService.AddToCart(currentUser.Id, model.ProductId, model.Quantity);
+            
+            if (!result.Success)
+            {
+                return BadRequest(new { error = result.ErrorMessage });
+            }
+
+            return Ok(new { message = "Product added to cart successfully" });
+        }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using Newtonsoft.Json;
@@ -85,6 +85,9 @@ namespace SimplCommerce.Module.Orders.Models
         public string PaymentMethod { get; set; }
 
         public decimal PaymentFeeAmount { get; set; }
+
+        [StringLength(450)]
+        public string IdempotencyKey { get; set; }
 
         public IList<Order> Children { get; protected set; } = new List<Order>();
 
