@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -10,11 +10,15 @@ using SimplCommerce.Infrastructure.Data;
 using SimplCommerce.Infrastructure.Helpers;
 using SimplCommerce.Infrastructure.Web.SmartTable;
 using SimplCommerce.Module.Checkouts.Areas.Checkouts.ViewModels;
+using SimplCommerce.Module.Checkouts.Services;
 using SimplCommerce.Module.Core.Extensions;
 using SimplCommerce.Module.Core.Services;
 using SimplCommerce.Module.Orders.Areas.Orders.ViewModels;
 using SimplCommerce.Module.Orders.Events;
 using SimplCommerce.Module.Orders.Models;
+using SimplCommerce.Module.Orders.Services;
+using SimplCommerce.Module.ShoppingCart.Services;
+using SimplCommerce.Module.ShoppingCart.Areas.ShoppingCart.ViewModels;
 
 namespace SimplCommerce.Module.Orders.Areas.Orders.Controllers
 {
@@ -27,13 +31,20 @@ namespace SimplCommerce.Module.Orders.Areas.Orders.Controllers
         private readonly IWorkContext _workContext;
         private readonly IMediator _mediator;
         private readonly ICurrencyService _currencyService;
+        private readonly IOrderService _orderService;
+        private readonly ICheckoutService _checkoutService;
+        private readonly ICartService _cartService;
 
-        public OrderApiController(IRepository<Order> orderRepository, IWorkContext workContext, IMediator mediator, ICurrencyService currencyService)
+        public OrderApiController(IRepository<Order> orderRepository, IWorkContext workContext, IMediator mediator, 
+            ICurrencyService currencyService, IOrderService orderService, ICheckoutService checkoutService, ICartService cartService)
         {
             _orderRepository = orderRepository;
             _workContext = workContext;
             _mediator = mediator;
             _currencyService = currencyService;
+            _orderService = orderService;
+            _checkoutService = checkoutService;
+            _cartService = cartService;
         }
 
         [HttpGet]
@@ -367,6 +378,65 @@ namespace SimplCommerce.Module.Orders.Areas.Orders.Controllers
             // MS Excel need the BOM to display UTF8 Correctly
             var csvBytesWithUTF8BOM = Encoding.UTF8.GetPreamble().Concat(csvBytes).ToArray();
             return File(csvBytesWithUTF8BOM, "text/csv", "orders-export.csv");
+        }
+
+        [HttpPost]
+        [Route("api/v1/orders")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CreateOrderFromCart([FromBody] CreateOrderRequest request)
+        {
+            // 幂等性检查
+            if (!string.IsNullOrEmpty(request.IdempotencyKey))
+            {
+                // 这里可以实现幂等性检查逻辑，例如检查是否已经存在相同IdempotencyKey的订单
+                // 为了简化，这里省略了具体实现
+            }
+
+            var currentUser = await _workContext.GetCurrentUser();
+            if (currentUser == null)
+            {
+                return Unauthorized();
+            }
+
+            // 获取购物车详情
+            var cart = await _cartService.GetCartDetails(currentUser.Id);
+            if (cart == null || !cart.Items.Any())
+            {
+                return BadRequest(new { error = "购物车为空" });
+            }
+
+            // 创建结账信息
+            var cartItemsToCheckout = cart.Items.Select(x => new CartItemToCheckoutVm
+            {
+                ProductId = x.ProductId,
+                Quantity = x.Quantity
+            }).ToList();
+
+            var checkout = await _checkoutService.Create(currentUser.Id, currentUser.Id, cartItemsToCheckout, cart.CouponCode);
+
+            // 更新税收和运费
+            var taxAndShippingRequest = new TaxAndShippingPriceRequestVm
+            {
+                ExistingShippingAddressId = request.ShippingAddressId,
+                SelectedShippingMethodName = request.ShippingMethod
+            };
+
+            if (request.ShippingAddressId == 0 && request.NewShippingAddress != null)
+            {
+                taxAndShippingRequest.NewShippingAddress = request.NewShippingAddress;
+            }
+
+            await _checkoutService.UpdateTaxAndShippingPrices(checkout.Id, taxAndShippingRequest);
+
+            // 创建订单
+            var orderResult = await _orderService.CreateOrder(checkout.Id, request.PaymentMethod, request.PaymentFeeAmount);
+            if (!orderResult.Success)
+            {
+                return BadRequest(new { error = orderResult.Error });
+            }
+
+            // 返回订单信息
+            return CreatedAtAction(nameof(Get), new { id = orderResult.Value.Id }, orderResult.Value);
         }
 
         [HttpPost("lines-export")]

@@ -486,6 +486,104 @@ namespace SimplCommerce.Module.Catalog.Areas.Catalog.Controllers
             return Accepted();
         }
 
+        [HttpGet]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetProducts(string name = null, long? categoryId = null, long? brandId = null, decimal? minPrice = null, decimal? maxPrice = null, bool? isFeatured = null, bool? isPublished = true, int pageIndex = 0, int pageSize = 10, string sortBy = "Id", bool isSortDescending = true)
+        {
+            var query = _productRepository.Query()
+                .Where(x => !x.IsDeleted && x.IsAllowToOrder);
+
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                query = query.Where(x => x.Name.Contains(name));
+            }
+
+            if (categoryId.HasValue)
+            {
+                query = query.Where(x => x.Categories.Any(c => c.CategoryId == categoryId.Value));
+            }
+
+            if (brandId.HasValue)
+            {
+                query = query.Where(x => x.BrandId == brandId.Value);
+            }
+
+            if (minPrice.HasValue)
+            {
+                query = query.Where(x => x.Price >= minPrice.Value);
+            }
+
+            if (maxPrice.HasValue)
+            {
+                query = query.Where(x => x.Price <= maxPrice.Value);
+            }
+
+            if (isFeatured.HasValue)
+            {
+                query = query.Where(x => x.IsFeatured == isFeatured.Value);
+            }
+
+            if (isPublished.HasValue)
+            {
+                query = query.Where(x => x.IsPublished == isPublished.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(sortBy))
+            {
+                switch (sortBy.ToLower())
+                {
+                    case "name":
+                        query = isSortDescending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name);
+                        break;
+                    case "price":
+                        query = isSortDescending ? query.OrderByDescending(x => x.Price) : query.OrderBy(x => x.Price);
+                        break;
+                    case "createdon":
+                        query = isSortDescending ? query.OrderByDescending(x => x.CreatedOn) : query.OrderBy(x => x.CreatedOn);
+                        break;
+                    case "isfeatured":
+                        query = isSortDescending ? query.OrderByDescending(x => x.IsFeatured) : query.OrderBy(x => x.IsFeatured);
+                        break;
+                    default:
+                        query = isSortDescending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id);
+                        break;
+                }
+            }
+
+            var totalItems = await query.CountAsync();
+            var products = await query
+                .Skip(pageIndex * pageSize)
+                .Take(pageSize)
+                .Include(x => x.ThumbnailImage)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Name,
+                    x.Slug,
+                    x.Price,
+                    x.OldPrice,
+                    x.SpecialPrice,
+                    x.SpecialPriceStart,
+                    x.SpecialPriceEnd,
+                    x.Sku,
+                    x.IsFeatured,
+                    x.IsCallForPricing,
+                    x.StockQuantity,
+                    x.StockTrackingIsEnabled,
+                    ThumbnailImageUrl = _mediaService.GetThumbnailUrl(x.ThumbnailImage)
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                TotalItems = totalItems,
+                PageIndex = pageIndex,
+                PageSize = pageSize,
+                TotalPages = (int)Math.Ceiling((double)totalItems / pageSize),
+                Items = products
+            });
+        }
+
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(long id)
         {
